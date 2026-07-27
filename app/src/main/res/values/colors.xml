@@ -7,4 +7,6 @@
     <color name="text_primary">#F2F5F2</color>
     <color name="text_secondary">#9AA69C</color>
     <color name="track_gray">#232B25</color>
+    <color name="accent_salmon">#F2A489</color>
+    <color name="accent_salmon_dark">#3F2A25</color>
 </resources>

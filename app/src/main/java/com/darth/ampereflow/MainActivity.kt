@@ -1,10 +1,8 @@
 package com.darth.ampereflow
 
 import android.Manifest
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
@@ -40,17 +38,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var capacityValue: TextView
     private lateinit var statusValue: TextView
 
+    private lateinit var currentSparkline: LineChartView
+    private lateinit var wattageSparkline: LineChartView
+
+    private lateinit var batteryLifeValue: TextView
+    private lateinit var batteryLifeSubtitle: TextView
+    private lateinit var batteryHealthValue: TextView
+    private lateinit var batteryHealthSubtitle: TextView
+
     private var monitoring = false
-    private var lastBatteryIntent: Intent? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val pollIntervalMs = 1000L
-
-    private val batteryReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            lastBatteryIntent = intent
-        }
-    }
 
     private val pollRunnable = object : Runnable {
         override fun run() {
@@ -69,13 +68,15 @@ class MainActivity : AppCompatActivity() {
         wattageBadge = findViewById(R.id.wattageBadge)
         monitorButton = findViewById(R.id.monitorButton)
         statsContainer = findViewById(R.id.statsContainer)
+        batteryLifeValue = findViewById(R.id.batteryLifeValue)
+        batteryLifeSubtitle = findViewById(R.id.batteryLifeSubtitle)
+        batteryHealthValue = findViewById(R.id.batteryHealthValue)
+        batteryHealthSubtitle = findViewById(R.id.batteryHealthSubtitle)
 
         buildStatCards()
         buildBottomNav()
 
         monitorButton.setOnClickListener { toggleMonitoring() }
-
-        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
     }
 
     override fun onStart() {
@@ -88,56 +89,79 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(pollRunnable)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(batteryReceiver)
-    }
-
     private fun buildStatCards() {
         val inflater = LayoutInflater.from(this)
         val rows = listOf(
-            listOf("⚡" to "VOLTAGE", "\u3030\uFE0F" to "CURRENT"),
-            listOf("\uD83D\uDD0B" to "WATTAGE", "\uD83C\uDF21\uFE0F" to "TEMPERATURE"),
+            listOf(MetricType.VOLTAGE to "⚡", MetricType.CURRENT to "\u3030\uFE0F"),
+            listOf(MetricType.WATTAGE to "\uD83D\uDD0B", MetricType.TEMPERATURE to "\uD83C\uDF21\uFE0F")
+        )
+        val extraRows = listOf(
             listOf("\u2764\uFE0F" to "HEALTH", "\uD83D\uDD0C" to "PLUGGED"),
             listOf("\uD83D\uDCDF" to "MAX CAPACITY", "\uD83D\uDCC8" to "CHARGE STATUS")
         )
 
-        val valueRefs = arrayOfNulls<TextView>(8)
-        var index = 0
+        val metricValueRefs = arrayOfNulls<TextView>(4)
+        val metricSparklineRefs = arrayOfNulls<LineChartView>(4)
 
+        // Rows 1-2: tappable metric cards (Voltage, Current, Wattage, Temperature)
+        var mi = 0
         for (row in rows) {
-            val rowLayout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-            for ((icon, label) in row) {
+            val rowLayout = newRow()
+            for ((metric, icon) in row) {
                 val card = inflater.inflate(R.layout.item_stat_card, rowLayout, false)
                 card.findViewById<TextView>(R.id.icon).text = icon
-                card.findViewById<TextView>(R.id.label).text = label
-                valueRefs[index] = card.findViewById(R.id.value)
+                card.findViewById<TextView>(R.id.label).text = "${metric.label.uppercase()}"
+                metricValueRefs[mi] = card.findViewById(R.id.value)
+                metricSparklineRefs[mi] = card.findViewById(R.id.sparkline)
+                card.setOnClickListener {
+                    val intent = Intent(this, MetricDetailActivity::class.java)
+                    intent.putExtra(MetricType.EXTRA_KEY, metric.name)
+                    startActivity(intent)
+                }
                 rowLayout.addView(card)
-                index++
+                mi++
             }
             statsContainer.addView(rowLayout)
         }
 
-        voltageValue = valueRefs[0]!!
-        currentValue = valueRefs[1]!!
-        wattageValue = valueRefs[2]!!
-        temperatureValue = valueRefs[3]!!
-        healthValue = valueRefs[4]!!
-        pluggedValue = valueRefs[5]!!
-        capacityValue = valueRefs[6]!!
-        statusValue = valueRefs[7]!!
+        voltageValue = metricValueRefs[0]!!
+        currentValue = metricValueRefs[1]!!
+        wattageValue = metricValueRefs[2]!!
+        temperatureValue = metricValueRefs[3]!!
+        currentSparkline = metricSparklineRefs[1]!!
+        wattageSparkline = metricSparklineRefs[2]!!
+        currentSparkline.visibility = View.VISIBLE
+        wattageSparkline.visibility = View.VISIBLE
 
-        val green = getColorCompat(R.color.accent_green)
-        currentValue.setTextColor(green)
-        wattageValue.setTextColor(green)
-        healthValue.setTextColor(green)
-        statusValue.setTextColor(green)
+        // Rows 3-4: informational cards, not tappable
+        val infoValueRefs = arrayOfNulls<TextView>(4)
+        var ii = 0
+        for (row in extraRows) {
+            val rowLayout = newRow()
+            for ((icon, label) in row) {
+                val card = inflater.inflate(R.layout.item_stat_card, rowLayout, false)
+                card.findViewById<TextView>(R.id.icon).text = icon
+                card.findViewById<TextView>(R.id.label).text = label
+                card.isClickable = false
+                infoValueRefs[ii] = card.findViewById(R.id.value)
+                rowLayout.addView(card)
+                ii++
+            }
+            statsContainer.addView(rowLayout)
+        }
+
+        healthValue = infoValueRefs[0]!!
+        pluggedValue = infoValueRefs[1]!!
+        capacityValue = infoValueRefs[2]!!
+        statusValue = infoValueRefs[3]!!
+    }
+
+    private fun newRow(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
     }
 
     private fun buildBottomNav() {
@@ -198,59 +222,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStats() {
-        val intent = lastBatteryIntent
-            ?: registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            ?: return
+        val reading = BatteryReader.read(this) ?: return
+        BatteryHistory.record(reading)
 
-        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
-        val pct = if (level >= 0 && scale > 0) (level * 100f / scale) else 0f
+        val isCharging = reading.isCharging
+        val dynamicColor = getColorCompat(if (isCharging) R.color.accent_green else R.color.accent_salmon)
 
-        val voltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)
-        val tempTenths = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)
-        val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
-        val health = intent.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN)
-        val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
-
-        val bm = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        val currentNowUa = try {
-            bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        } catch (e: Exception) { 0L }
-        val chargeCounterUah = try {
-            bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
-        } catch (e: Exception) { -1L }
-
-        val currentMa = currentNowUa / 1000.0
-        val voltageV = voltageMv / 1000.0
-        val wattage = abs(currentMa / 1000.0) * voltageV
-
-        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING
-        val chargingFast = isCharging && wattage > 10.0
-
-        gauge.setProgress(pct / 100f)
-        percentText.text = String.format("%.2f%%", pct)
+        gauge.setProgress(reading.pct / 100f)
+        percentText.text = String.format("%.2f%%", reading.pct)
         statusText.text = when {
-            chargingFast -> "FAST CHARGING"
+            isCharging && reading.wattage > 10.0 -> "FAST CHARGING"
             isCharging -> "CHARGING"
-            status == BatteryManager.BATTERY_STATUS_FULL -> "FULLY CHARGED"
-            plugged != 0 -> "PLUGGED IN"
+            reading.status == BatteryManager.BATTERY_STATUS_FULL -> "FULLY CHARGED"
+            reading.plugged != 0 -> "PLUGGED IN"
             else -> "NOT CHARGING"
         }
 
-        if (isCharging || plugged != 0) {
-            wattageBadge.visibility = View.VISIBLE
-            wattageBadge.text = "+${String.format("%.0f", wattage * 1000)} mW"
-        } else {
-            wattageBadge.visibility = View.GONE
-        }
+        val wattageMw = reading.wattage * 1000
+        val badgeSign = if (isCharging) "+" else "-"
+        wattageBadge.visibility = View.VISIBLE
+        wattageBadge.text = "$badgeSign${String.format("%.0f", wattageMw)} mW"
+        wattageBadge.setTextColor(dynamicColor)
+        wattageBadge.setBackgroundResource(
+            if (isCharging) R.drawable.bg_wattage_badge else R.drawable.bg_wattage_badge_negative
+        )
 
-        voltageValue.text = "$voltageMv mV"
-        val sign = if (currentMa >= 0) "+" else ""
-        currentValue.text = "$sign${String.format("%.0f", currentMa)} mA"
-        wattageValue.text = "${if (wattage >= 0) "+" else ""}${String.format("%.1f", wattage)} W"
-        temperatureValue.text = String.format("%.1f°C", tempTenths / 10.0)
+        voltageValue.text = "${reading.voltageMv} mV"
+        val currentSign = if (reading.currentMa >= 0) "+" else ""
+        currentValue.text = "$currentSign${String.format("%.0f", reading.currentMa)} mA"
+        currentValue.setTextColor(dynamicColor)
+        wattageValue.text = "${if (isCharging) "+" else "-"}${String.format("%.1f", reading.wattage)} W"
+        wattageValue.setTextColor(dynamicColor)
+        temperatureValue.text = String.format("%.1f°C", reading.tempC)
 
-        healthValue.text = when (health) {
+        currentSparkline.lineColor = dynamicColor
+        currentSparkline.setValues(BatteryHistory.current)
+        wattageSparkline.lineColor = dynamicColor
+        wattageSparkline.setValues(BatteryHistory.wattage)
+
+        healthValue.text = when (reading.health) {
             BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
             BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheating"
             BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
@@ -258,41 +268,95 @@ class MainActivity : AppCompatActivity() {
             BatteryManager.BATTERY_HEALTH_COLD -> "Cold"
             else -> "Unknown"
         }
+        healthValue.setTextColor(getColorCompat(R.color.accent_green))
 
-        pluggedValue.text = when (plugged) {
+        pluggedValue.text = when (reading.plugged) {
             BatteryManager.BATTERY_PLUGGED_AC -> "AC"
             BatteryManager.BATTERY_PLUGGED_USB -> "USB"
             BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless"
             else -> "Unplugged"
         }
 
-        val designCapacity = getDesignCapacityMah()
+        val designCapacity = BatteryReader.designCapacityMah(this)
         capacityValue.text = when {
             designCapacity > 0 -> "$designCapacity mAh"
-            chargeCounterUah > 0 && pct > 0 -> "${(chargeCounterUah / 1000.0 / (pct / 100.0)).toInt()} mAh (est.)"
+            reading.chargeCounterUah > 0 && reading.pct > 0 ->
+                "${(reading.chargeCounterUah / 1000.0 / (reading.pct / 100.0)).toInt()} mAh (est.)"
             else -> "Unavailable"
         }
 
-        statusValue.text = when (status) {
+        statusValue.text = when (reading.status) {
             BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
             BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
             BatteryManager.BATTERY_STATUS_FULL -> "Full"
             BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
             else -> "Unknown"
         }
+        statusValue.setTextColor(dynamicColor)
+
+        updateInsights(reading, designCapacity)
     }
 
-    /** Reads the device's design battery capacity via the hidden PowerProfile API.
-     *  Not guaranteed to work on every OEM/Android version — falls back gracefully. */
-    private fun getDesignCapacityMah(): Int {
-        return try {
-            val powerProfileClass = Class.forName("com.android.internal.os.PowerProfile")
-            val constructor = powerProfileClass.getConstructor(Context::class.java)
-            val powerProfile = constructor.newInstance(this)
-            val method = powerProfileClass.getMethod("getBatteryCapacity")
-            (method.invoke(powerProfile) as Double).toInt()
-        } catch (e: Exception) {
-            -1
+    private fun updateInsights(reading: BatteryReading, designCapacityMah: Int) {
+        val prefs = getSharedPreferences("ampereflow_prefs", Context.MODE_PRIVATE)
+        val remainingMah = if (reading.chargeCounterUah > 0) reading.chargeCounterUah / 1000.0 else -1.0
+
+        if (reading.isCharging) {
+            batteryLifeSubtitle.text = "Until fully charged"
+            val capacityMah = when {
+                designCapacityMah > 0 -> designCapacityMah.toDouble()
+                reading.pct > 0 && remainingMah > 0 -> remainingMah / (reading.pct / 100.0)
+                else -> -1.0
+            }
+            batteryLifeValue.text = if (remainingMah > 0 && capacityMah > 0 && reading.currentMa > 0) {
+                val neededMah = (capacityMah - remainingMah).coerceAtLeast(0.0)
+                formatHoursMinutes(neededMah / reading.currentMa)
+            } else {
+                "Calculating…"
+            }
+        } else {
+            batteryLifeSubtitle.text = "At the current usage"
+            batteryLifeValue.text = if (remainingMah > 0 && reading.currentMa < 0) {
+                "${formatHoursMinutes(remainingMah / abs(reading.currentMa))} left"
+            } else {
+                "Calculating…"
+            }
         }
+
+        if (reading.pct >= 99f && reading.chargeCounterUah > 0) {
+            prefs.edit()
+                .putLong("last_full_uah", reading.chargeCounterUah)
+                .putFloat("last_full_pct", reading.pct)
+                .apply()
+        }
+
+        val lastFullUah = prefs.getLong("last_full_uah", -1L)
+        val lastFullPct = prefs.getFloat("last_full_pct", 0f)
+
+        if (lastFullUah > 0 && designCapacityMah > 0) {
+            val healthPct = ((lastFullUah / 1000.0) / designCapacityMah * 100.0).coerceIn(0.0, 100.0)
+            val status = when {
+                healthPct >= 80 -> "Good"
+                healthPct >= 50 -> "Fair — keep an eye on it"
+                else -> "Replace soon"
+            }
+            batteryHealthValue.text = "~${healthPct.toInt()}%  $status"
+            batteryHealthSubtitle.text = if (lastFullPct < 100f) {
+                "Measured at ${lastFullPct.toInt()}% · charge to 100% for a more accurate reading"
+            } else {
+                "Measured at last full charge"
+            }
+        } else {
+            batteryHealthValue.text = "Not yet calibrated"
+            batteryHealthSubtitle.text = "Charge to 100% for an accurate reading"
+        }
+    }
+
+    private fun formatHoursMinutes(hoursDouble: Double): String {
+        if (hoursDouble.isNaN() || hoursDouble.isInfinite() || hoursDouble < 0) return "Calculating…"
+        val totalMinutes = (hoursDouble * 60).toInt()
+        val h = totalMinutes / 60
+        val m = totalMinutes % 60
+        return if (h > 0) "${h}h ${m}m" else "${m}m"
     }
 }

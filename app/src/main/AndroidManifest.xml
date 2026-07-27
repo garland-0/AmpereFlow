@@ -21,6 +21,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".MetricDetailActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AmpereFlow" />
+
         <service
             android:name=".BatteryMonitorService"
             android:exported="false"
